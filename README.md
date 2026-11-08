@@ -13,18 +13,58 @@
 
 ## 2. 配置直连和代理分流
 
-以下是合并进自己的 YAML 的结构。保留原有的 IPv6 节点定义，将示例节点名称替换为配置里真实存在的名称；它不是一份可直接导入的完整订阅。
+### 2.1 从原订阅复制一个节点
+
+1. 打开 Clash Verge 的「订阅」页，右键原订阅，找「编辑文件」或「查看配置」。如果版本没有该入口，用服务商提供的 Clash/Mihomo 格式 YAML 在本地打开。**保留原订阅，不在原文件上修改。**
+2. 搜索行首的 `proxies:`。从上一步确认可用的节点里选一个，复制它的**完整条目**：从 `- name:` 到下一个节点之前。若节点写成 `- {name: ..., type: ..., ...}`，就复制整行。地址、端口、协议、密码和 TLS 等字段都照原样保留。
+3. 如果源文件只有 `proxy-providers:`，这只是节点集合的引用；需要在本地取得该集合的实际节点定义，不能把供应商名称或代理组名称当节点粘贴。如果节点引用了 YAML 锚点或链式代理，先选一个不依赖其他配置的节点完成首测。
+
+### 2.2 创建本地 YAML，填入真实节点
+
+用记事本新建 `campus-ipv6.yaml`，把下面模板全部复制进去。保存时选「所有文件」、UTF-8，并确认扩展名是 `.yaml`，不是 `.yaml.txt`。
 
 ```yaml
 mode: rule
 ipv6: true
+allow-lan: false
+
+dns:
+  enable: true
+  ipv6: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - '*.lan'
+    - '*.local'
+  default-nameserver:
+    - '2400:3200::1'
+    - '2606:4700:4700::1111'
+  proxy-server-nameserver:
+    - '2400:3200::1'
+    - '2606:4700:4700::1111'
+  direct-nameserver:
+    - '2400:3200::1'
+    - '2606:4700:4700::1111'
+  nameserver-policy:
+    'geosite:cn':
+      - '2400:3200::1'
+    '+.edu.cn':
+      - '2400:3200::1'
+  nameserver:
+    - 'https://1.1.1.1/dns-query#校园IPv6'
 
 proxies:
   - name: 校园IPv6直连
     type: direct
     ip-version: ipv6
     udp: true
-  # 在此保留自己的节点定义，每个节点设置 ip-version: ipv6。
+
+  # 用从原订阅复制的完整节点替换以下 5 行。
+  - name: 示例节点
+    type: socks5
+    server: '2001:db8::1'
+    port: 1080
+    ip-version: ipv6
 
 proxy-groups:
   - name: 校园IPv6
@@ -37,7 +77,7 @@ proxy-groups:
     interval: 600
     tolerance: 80
     proxies:
-      - 替换为你的IPv6节点名称
+      - 示例节点
 
 rules:
   - IP-CIDR,0.0.0.0/0,REJECT,no-resolve
@@ -46,10 +86,26 @@ rules:
   - MATCH,校园IPv6
 ```
 
-- `GEOSITE,cn` 依赖 Mihomo 的 GeoSite 数据。它是规则集合，不代表国内的每个网站都支持 IPv6，也不一定涵盖所有国内域名。
-- 第一条规则拒绝进入 Clash、且此时已知目标为 IPv4 的连接；`no-resolve` 避免为这条规则主动查询域名。部分写死 IPv4 地址的软件或下载线路会失败。国内直连域名只有 A 记录时，也无法按严格 IPv6 规则直连。
-- 外网一跳“电脑 → 代理节点”使用 IPv6；节点到目标网站的协议由节点决定。
-- DNS 应开启 `ipv6: true`。如需自定义国内和教育网 DNS，可在 `dns.nameserver-policy` 中把 `'geosite:cn'` 与 `'+.edu.cn'` 指向可达的 IPv6 DNS，例如 `'2400:3200::1'`，并按需用 `direct-nameserver` 指定 IPv6 解析器。先测解析器在自己的校园网可达，再应用；合并配置后检查实际生效的 DNS。TUN 劫持后的虚拟 IPv4 地址不等于无线网卡对外发出了 IPv4 流量。
+只改两处：
+
+1. 把 `proxies:` 下的「示例节点」整个条目换成你复制的真实节点。保留「校园IPv6直连」。确认真实节点有且只有一个 `ip-version: ipv6`：多行写法把它和 `type:` 对齐；单行花括号写法在 `}` 前加 `, ip-version: ipv6`，已有该字段就改值。缩进用空格，不用 Tab。
+2. 在「IPv6自动选择」组的 `proxies:` 下，把 `示例节点` 替换为真实节点的 `name`，包含空格、符号和表情在内都要一致。第一轮只放一个节点；成功后可在顶层 `proxies:` 下继续加入节点，并在组内每行列一个名称。不要把 `DIRECT` 加进该组。示例里的 `2001:db8::1` 是文档占位地址，保留它不会连通。
+
+### 2.3 导入并启用
+
+1. 在 Clash Verge「订阅」页把 `campus-ipv6.yaml` 拖入窗口，或点击「新建」，选择「本地」并选中该文件。参见 [Clash Verge Rev 本地配置导入](https://www.clashverge.dev/guide/profile.html#本地配置)。
+2. 点选新配置，回首页把代理模式设为「规则」，开启「系统代理」。到「代理」页，在「校园IPv6」组选择「IPv6自动选择」。先用浏览器确认能访问国内网站和外网，再按下一节开启 TUN 测试网盘等客户端。
+3. 如果提示节点不存在，核对组内名称和节点的 `name`；如果提示 YAML 解析失败，检查缩进、重复字段和文件扩展名。若导入成功但新规则没生效，检查全局或订阅覆写是否替换了规则或 DNS。网页异常时可切回原订阅。
+
+### 2.4 看懂分流和 DNS
+
+| 进入 Clash 的请求 | 处理方式 |
+| --- | --- |
+| 目标已知为 IPv4 地址 | 拒绝；该规则不为了匹配而主动解析域名。依赖 IPv4 地址的下载线路可能失败。 |
+| `edu.cn` 或 `GEOSITE,cn` 匹配的域名 | 使用「校园IPv6直连」。只有 IPv4 的站点不会回退直连。 |
+| 其余请求 | 走「校园IPv6」组。电脑到代理节点使用 IPv6；节点到网站的协议由节点决定。 |
+
+模板的节点域名和国内 DNS 查询使用 IPv6 解析器，其他域名的 DoH 查询通过「校园IPv6」代理。DoH URL 里的 `1.1.1.1` 是代理另一端访问的解析器，并不是本机从校园网直接拨 IPv4。若国内网站打不开，可在 PowerShell 运行 `Resolve-DnsName www.baidu.com -Type AAAA -Server 2400:3200::1` 检查解析器，并将相应条目替换为校园网可达的 IPv6 DNS。若报 `GEOSITE,cn` 加载错误，先检查 Mihomo 的 GeoSite 数据是否可用。字段说明见 [Mihomo DNS 文档](https://wiki.metacubex.one/config/dns/)。
 
 ## 3. 启用方式与实测
 
